@@ -143,7 +143,7 @@ to both sources, per aare.guru's usage terms.
 
 ## Authors & credits
 
-- **[Markus Baumgartner](https://www.linkedin.com/in/markus-baumgartner-43025a8a/)** — [amaise AG](https://amaise.com)
+- **[Markus Baumgartner](https://www.linkedin.com/in/markus-baumgartner-43025a8a/)** — [amaise AG](https://www.linkedin.com/company/amaise-inc)
 - **Data:** [aare.guru](https://aare.guru/) (Bureau für digitale Existenz) ·
   [BAFU](https://www.hydrodaten.admin.ch/) (Bundesamt für Umwelt)
 - **Co-author:** Initial implementation drafted with
