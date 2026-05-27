@@ -17,6 +17,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 API_BASE = "https://aareguru.existenz.ch/v2018/current"
+# aare.guru asks integrators to identify themselves with `app` and `version`
+# query params. Override per-deployment via AARE_APP and AARE_VERSION env vars.
 APP_NAME = "aare-slack-bot"
 APP_VERSION = "1"
 USER_AGENT = "aare-slack-bot/1.0 (+https://github.com/amaise-inc/aare-slack-bot)"
@@ -46,29 +48,55 @@ def parse_cities(env_value: str | None) -> list[str]:
     return cities or list(DEFAULT_CITIES)
 
 
-def build_api_url(city: str) -> str:
-    """Build the aare.guru `current` API URL for a given city slug."""
-    return f"{API_BASE}?city={city}&app={APP_NAME}&version={APP_VERSION}"
+def build_api_url(
+    city: str,
+    app: str = APP_NAME,
+    version: str = APP_VERSION,
+) -> str:
+    """Build the aare.guru `current` API URL for a given city slug.
 
-
-def classify(temp: float) -> tuple[str, str, str | None, str]:
-    """Map a water temperature to (emoji, slack_color, optional_header, tagline).
-
-    The header is only set for swim-worthy temperatures (>= 18 °C); below that
-    the message stays low-key. The tagline is a short fun line shown on every
-    message.
+    aare.guru asks integrators to identify themselves via ``app`` and ``version``.
     """
-    if temp >= 22:
-        return "🔥", "#d0021b", "BATHTUB MODE", "🍝 Spaghetti water. Bring sunscreen."
-    if temp >= 20:
-        return "☀️", "#2eb886", "PERFECT FOR A SWIM", "🏖️ Grab the towel, this is the day."
-    if temp >= 18:
-        return "🏊", "#2eb886", "TIME TO SWIM!", "🎉 Officially swim-worthy. Get in."
-    if temp >= 15:
-        return "😬", "#f5a623", None, "🥽 Brave-souls only. Quick dip at most."
-    if temp >= 12:
-        return "🥶", "#4a90e2", None, "🦶 Toes-only territory."
-    return "🧊", "#4a90e2", None, "☕ Hard pass. Coffee weather."
+    return f"{API_BASE}?city={city}&app={app}&version={version}"
+
+
+# One tier per whole degree from 12 °C up to "off the charts". Hotter tiers
+# use warmer/more vibrant colors and more celebratory emoji.
+# Order: highest threshold first. `classify` walks down and returns the first match.
+_TIERS: tuple[tuple[float, str, str, str], ...] = (
+    (24, "🔥", "#7a0010", "🔥🌶️🔥 OFF THE CHARTS — record territory!"),
+    (23, "🔥", "#b00020", "🔥🔥 Hotter than a hot tub."),
+    (22, "🔥", "#d0021b", "🔥🏊 BATHTUB MODE — spaghetti water."),
+    (21, "☀️", "#f5511a", "🏖️☀️ Linger after work."),
+    (20, "☀️", "#f59020", "🌞 PERFECT — grab the towel."),
+    (19, "🏊", "#2eb886", "🏊‍♀️🏊 Properly nice, go for it."),
+    (18, "🏊", "#7ed321", "🎉 SWIM-WORTHY — get in."),
+    (17, "🤔", "#f5d020", "🤔 Almost swimmable, depending on bravery."),
+    (16, "😬", "#f5a623", "🤐 Quick dip if you must."),
+    (15, "😬", "#f5a623", "🥽 Brave-souls only."),
+    (14, "🥶", "#6cb7d8", "🧣 Cold enough to lie about it."),
+    (13, "🥶", "#5b9bd5", "🥶 Numb fingers in seconds."),
+    (12, "🥶", "#4a90e2", "🦶 Toes-only territory."),
+)
+_SUB_FREEZING: tuple[str, str, str] = (
+    "🧊",
+    "#2a5e8a",
+    "☕ Hard pass — coffee weather.",
+)
+
+
+def classify(temp: float) -> tuple[str, str, str]:
+    """Map a water temperature to (emoji, slack_color, slogan).
+
+    One tier per whole degree from 12 °C up to "off the charts" at 24 °C+.
+    Hotter tiers get warmer colors and more celebratory emoji. The slogan is
+    the tier's signature line — short, fun, and the second-most prominent
+    element in the Slack message (the temperature itself is first).
+    """
+    for threshold, emoji, color, slogan in _TIERS:
+        if temp >= threshold:
+            return emoji, color, slogan
+    return _SUB_FREEZING
 
 
 def build_bar(
@@ -112,8 +140,14 @@ def build_payload(
     water temp, `data["aare"]["flow"]` is the flow, `data["weather"]["current"]["tt"]`
     is the air temp. Optional fields are skipped gracefully if missing.
 
-    `now` is the timestamp shown in the date header; defaults to now in
-    Europe/Zurich.
+    `now` is the timestamp shown in the headline; defaults to now in Europe/Zurich.
+
+    Visual hierarchy:
+        1. ``headline`` — big header block: date + emoji + temperature + city.
+        2. ``slogan``   — bold one-liner (tier signature).
+        3. divider
+        4. ``details``  — forecast / air / flow / bar (small).
+        5. ``attribution`` — context block with aare.guru + BAFU links.
     """
     aare = data["aare"]
     temp = float(aare["temperature"])
@@ -122,61 +156,60 @@ def build_payload(
     weather_current = (data.get("weather") or {}).get("current") or {}
     atmp = weather_current.get("tt")
 
-    emoji, color, header, tagline = classify(temp)
+    emoji, color, slogan = classify(temp)
     bar = build_bar(temp)
     when = now if now is not None else datetime.now(CH_TZ)
 
-    headline = f"{emoji} *Aare {city_label}: {temp}°C*"
+    # 1. Headline — date + temp are the two big things.
+    headline_text = (
+        f"{emoji}  Aare {city_label}  {temp}°C"
+        f"   ·   {build_datetime_str(when)}"
+    )
+
+    # 4. Details — bar, then forecast, then ambient metrics, with blank lines
+    #    in between for breathing room. Slack renders "\n\n" as a paragraph
+    #    break, "\n" as a soft newline.
+    detail_sections: list[str] = [f"`{bar}`   _10°—26°_"]
     if forecast2h_raw is not None:
         forecast2h = float(forecast2h_raw)
         arrow = forecast_trend(temp, forecast2h)
-        headline += f"   {arrow} *2h: {forecast2h}°C*"
+        detail_sections.append(f"{arrow}  *2h forecast: {forecast2h}°C*")
 
-    extras = []
+    ambient: list[str] = []
     if atmp is not None:
-        extras.append(f"🌡️ Air {atmp}°C")
+        ambient.append(f"🌡️  Air {atmp}°C")
     if flow is not None:
-        extras.append(f"💧 Flow {flow} m³/s")
+        ambient.append(f"💧  Flow {flow} m³/s")
+    if ambient:
+        detail_sections.append("   ·   ".join(ambient))
 
-    text_lines = [headline, f"`{bar}`  _10°—26°_"]
-    if extras:
-        text_lines.append(" · ".join(extras))
-    text_lines.append(f"_{tagline}_")
-    text = "\n".join(text_lines)
+    details_text = "\n\n".join(detail_sections)
 
     blocks: list[dict] = [
         {
-            "type": "context",
-            "block_id": "date",
-            "elements": [
-                {"type": "mrkdwn", "text": f"📅 *{build_datetime_str(when)}*"},
-            ],
+            "type": "header",
+            "block_id": "headline",
+            "text": {"type": "plain_text", "text": headline_text, "emoji": True},
         },
-    ]
-    if header:
-        blocks.append(
-            {
-                "type": "header",
-                "block_id": "header",
-                "text": {"type": "plain_text", "text": f"🌊 {header}"},
-            }
-        )
-    blocks.append(
         {
             "type": "section",
-            "block_id": "main",
-            "text": {"type": "mrkdwn", "text": text},
-        }
-    )
-    blocks.append(
+            "block_id": "slogan",
+            "text": {"type": "mrkdwn", "text": f"*{slogan}*"},
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "block_id": "details",
+            "text": {"type": "mrkdwn", "text": details_text},
+        },
         {
             "type": "context",
             "block_id": "attribution",
             "elements": [
                 {"type": "mrkdwn", "text": ATTRIBUTION_TEXT},
             ],
-        }
-    )
+        },
+    ]
 
     return {"attachments": [{"color": color, "blocks": blocks}]}
 
@@ -225,10 +258,12 @@ def main() -> int:
         return 1
 
     cities = parse_cities(os.environ.get("CITIES"))
+    app = os.environ.get("AARE_APP") or APP_NAME
+    version = os.environ.get("AARE_VERSION") or APP_VERSION
     exit_code = 0
 
     for city in cities:
-        url = build_api_url(city)
+        url = build_api_url(city, app=app, version=version)
         try:
             data = fetch_aare_data(url)
         except (urllib.error.URLError, TimeoutError) as exc:

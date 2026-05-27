@@ -71,6 +71,9 @@ block, give it a stable `block_id` so tests don't have to count indices.
 - `SLACK_WEBHOOK_URL` (required) — set in CI as repo secret `SLACK_WEBHOOK_AARE`.
 - `CITIES` (optional) — comma-separated city slugs, default `bern`. Each city
   produces one Slack message. Failures on individual cities don't stop the rest.
+- `AARE_APP` (optional) — value of the `app` query param sent to aare.guru.
+  Default `aare-slack-bot`. aare.guru asks every integrator to identify itself.
+- `AARE_VERSION` (optional) — value of the `version` query param. Default `1`.
 
 ## Exit codes
 

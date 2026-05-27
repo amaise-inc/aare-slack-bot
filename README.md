@@ -17,39 +17,51 @@ attribution footer linking back to aare.guru and BAFU. Swim-worthy temperatures
 
 ## Sample output
 
-Cold (no header):
+The message has a clear visual hierarchy: **date + temperature** as the big
+header, **bold slogan** below it, then **details** (forecast, air, flow, bar),
+and a small **attribution** footer. The vertical attachment bar takes on the
+tier color — deep blue when frozen through to deep red at record temps.
+
+Warm (≥ 18 °C):
 
 ```
-📅 Tue 27 May · 11:30
-🥶 Aare Bern: 13.1°C   ↘ 2h: 12.8°C
-██░░░░░░░░░░░░░░  10°—26°
-🌡️ Air 18°C · 💧 Flow 195 m³/s
-🦶 Toes-only territory.
+🏊 Aare Bern 19.2°C  ·  Wed 27 May · 11:30       (header — big & bold)
+*🎉 SWIM-WORTHY — get in.*                       (slogan — bold)
+──────────────────────────────────────────────
+`█████████░░░░░░░`  10°—26°
+↗ 2h: 19.8°C  ·  🌡️ Air 24°C  ·  💧 Flow 142 m³/s
+📡 Data: aare.guru · BAFU                        (footer — small)
+```
+
+Cold (< 18 °C):
+
+```
+🥶 Aare Bern 13.1°C  ·  Wed 27 May · 11:30
+*🥶 Numb fingers in seconds.*
+──────────────────────────────────────────────
+`██░░░░░░░░░░░░░░`  10°—26°
+↘ 2h: 12.8°C  ·  🌡️ Air 18°C  ·  💧 Flow 195 m³/s
 📡 Data: aare.guru · BAFU
 ```
 
-Warm (with header):
+## Temperature tiers — one per degree, hotter = more colorful
 
-```
-📅 Tue 27 May · 16:00
-🌊 TIME TO SWIM!
-🏊 Aare Bern: 19.2°C   ↗ 2h: 19.8°C
-█████████░░░░░░░  10°—26°
-🌡️ Air 24°C · 💧 Flow 142 m³/s
-🎉 Officially swim-worthy. Get in.
-📡 Data: aare.guru · BAFU
-```
-
-## Temperature tiers
-
-| Range         | Emoji | Header             | Slack color | Tagline                                 |
-|---------------|-------|--------------------|-------------|-----------------------------------------|
-| ≥ 22 °C       | 🔥    | BATHTUB MODE       | red         | 🍝 Spaghetti water. Bring sunscreen.    |
-| 20 – 21.9 °C  | ☀️    | PERFECT FOR A SWIM | green       | 🏖️ Grab the towel, this is the day.    |
-| 18 – 19.9 °C  | 🏊    | TIME TO SWIM!      | green       | 🎉 Officially swim-worthy. Get in.      |
-| 15 – 17.9 °C  | 😬    | (none)             | orange      | 🥽 Brave-souls only. Quick dip at most. |
-| 12 – 14.9 °C  | 🥶    | (none)             | blue        | 🦶 Toes-only territory.                 |
-| < 12 °C       | 🧊    | (none)             | blue        | ☕ Hard pass. Coffee weather.           |
+| Temp     | Emoji | Slogan                                                  | Color    |
+|----------|-------|---------------------------------------------------------|----------|
+| ≥ 24 °C  | 🔥    | 🔥🌶️🔥 OFF THE CHARTS — record territory!               | deep red |
+| 23 °C    | 🔥    | 🔥🔥 Hotter than a hot tub.                             | red      |
+| 22 °C    | 🔥    | 🔥🏊 BATHTUB MODE — spaghetti water.                    | red      |
+| 21 °C    | ☀️    | 🏖️☀️ Linger after work.                                | orange-red |
+| 20 °C    | ☀️    | 🌞 PERFECT — grab the towel.                            | orange   |
+| 19 °C    | 🏊    | 🏊‍♀️🏊 Properly nice, go for it.                       | green    |
+| 18 °C    | 🏊    | 🎉 SWIM-WORTHY — get in.                                | lime     |
+| 17 °C    | 🤔    | 🤔 Almost swimmable, depending on bravery.              | yellow   |
+| 16 °C    | 😬    | 🤐 Quick dip if you must.                               | orange   |
+| 15 °C    | 😬    | 🥽 Brave-souls only.                                    | orange   |
+| 14 °C    | 🥶    | 🧣 Cold enough to lie about it.                         | light blue |
+| 13 °C    | 🥶    | 🥶 Numb fingers in seconds.                             | blue     |
+| 12 °C    | 🥶    | 🦶 Toes-only territory.                                 | blue     |
+| < 12 °C  | 🧊    | ☕ Hard pass — coffee weather.                          | deep blue |
 
 Forecast arrow uses a ±0.3 °C threshold:
 `↗` warming, `↘` cooling, `→` steady.
