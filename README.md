@@ -4,11 +4,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 
-Posts the current Aare river water temperature in Bern to `#aare` twice every
-**weekday** (Mon–Fri, no posts on weekends):
+Posts the current Aare river water temperature in Bern to `#aare` four times
+every **weekday** (Mon–Fri, no posts on weekends):
 
 - **11:30 CH** — lunch decision
-- **16:00 CH** — Feierabend decision
+- **15:00 CH** — mid-afternoon check
+- **16:30 CH** — pre-Feierabend
+- **17:30 CH** — Feierabend
 
 Each message shows the date + weekday, current temp with tier emoji, a 2-hour
 forecast with trend arrow (↗ / → / ↘), air temp, flow, a short tagline, and an

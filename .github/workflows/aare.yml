@@ -2,9 +2,13 @@ name: Post Aare temp to Slack
 
 on:
   schedule:
-    # Cron is in UTC. Optimised for CH summer time (CEST = UTC+2), weekdays only:
-    - cron: '30 9 * * 1-5'   # 11:30 CH summer (10:30 winter), Mon–Fri — Lunch
-    - cron: '0 14 * * 1-5'   # 16:00 CH summer (15:00 winter), Mon–Fri — Feierabend
+    # Cron is in UTC. Optimised for CH summer time (CEST = UTC+2), weekdays only.
+    # In winter (CET = UTC+1) each post arrives 1h earlier — accepted, since the
+    # water is too cold to swim anyway.
+    - cron: '30 9 * * 1-5'    # 11:30 CH summer (10:30 winter) — Lunch
+    - cron: '0 13 * * 1-5'    # 15:00 CH summer (14:00 winter) — Mid-afternoon
+    - cron: '30 14 * * 1-5'   # 16:30 CH summer (15:30 winter) — Pre-Feierabend
+    - cron: '30 15 * * 1-5'   # 17:30 CH summer (16:30 winter) — Feierabend
   workflow_dispatch:       # manual trigger for testing
 
 permissions:
