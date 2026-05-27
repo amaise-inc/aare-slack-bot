@@ -133,26 +133,6 @@ make run                                   # post to Slack (Bern only)
 CITIES=bern,thun python aare_slack.py
 ```
 
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| Workflow fails with `ERROR: SLACK_WEBHOOK_URL environment variable not set` | Repo secret `SLACK_WEBHOOK_AARE` missing | Re-run `gh secret set SLACK_WEBHOOK_AARE` |
-| Workflow fails with `Slack returned 403` or `404` | Webhook revoked or wrong URL | Regenerate the webhook in Slack, update the secret |
-| Scheduled run is 5–15 min late | Normal GitHub Actions queue delay | Nothing to do — cron is best-effort |
-| Posts arrive 1h earlier between Oct–Mar | CH switches to winter time (UTC+1), cron stays in UTC | Acceptable for a swim bot — water is too cold anyway |
-| Posts land in the wrong channel | Webhook is bound to a channel other than `#aare` | Recreate the webhook with `#aare` selected, update the secret |
-
-## Rotating the webhook
-
-If the webhook URL is ever exposed (accidentally committed, shared in a chat,
-posted in an issue), rotate it:
-
-1. https://api.slack.com/apps → your App → Incoming Webhooks → Remove the
-   compromised webhook → Add New Webhook to Workspace (target `#aare`)
-2. `gh secret set SLACK_WEBHOOK_AARE` and paste the new URL
-3. `gh workflow run aare.yml` to verify
-
 ## Data source
 
 Data from the [aare.guru API](https://aare.guru/), an unofficial public API by
