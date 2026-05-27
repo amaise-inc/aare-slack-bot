@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -25,8 +27,12 @@ USER_AGENT = "aare-slack-bot/1.0 (+https://github.com/amaise-inc/aare-slack-bot)
 HTTP_TIMEOUT_S = 10
 
 TREND_THRESHOLD = 0.3  # °C difference that counts as a real trend
+_RAIN_RISK_THRESHOLD = 50.0  # `rrisk` >= this means "expect rain", => no swim
 CH_TZ = ZoneInfo("Europe/Zurich")
 DEFAULT_CITIES = ("bern",)
+# aare.guru city slugs are short lowercase identifiers. Reject anything else
+# to keep the outbound URL safe from injection via env vars.
+_CITY_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{1,32}$")
 
 # aare.guru terms ask integrators to link back to aare.guru and BAFU.
 AARE_GURU_URL = "https://aare.guru"
@@ -41,10 +47,21 @@ ATTRIBUTION_TEXT = (
 # ---------------------------------------------------------------------------
 
 def parse_cities(env_value: str | None) -> list[str]:
-    """Parse a comma-separated CITIES env var. Empty/missing → default."""
+    """Parse the CITIES env var, dropping anything that isn't a valid slug.
+
+    Slugs are short lowercase identifiers (e.g. ``bern``, ``thun``,
+    ``interlaken-ost``). Invalid entries are skipped so a typo or hostile env
+    value can't smuggle extra query params into the outbound URL.
+    """
     if not env_value:
         return list(DEFAULT_CITIES)
-    cities = [c.strip().lower() for c in env_value.split(",") if c.strip()]
+    cities: list[str] = []
+    for raw in env_value.split(","):
+        slug = raw.strip().lower()
+        if slug and _CITY_SLUG_RE.match(slug):
+            cities.append(slug)
+        elif slug:
+            print(f"WARN: ignoring invalid city slug {slug!r}", file=sys.stderr)
     return cities or list(DEFAULT_CITIES)
 
 
@@ -56,47 +73,159 @@ def build_api_url(
     """Build the aare.guru `current` API URL for a given city slug.
 
     aare.guru asks integrators to identify themselves via ``app`` and ``version``.
+    All params are URL-encoded so user-supplied env values can't smuggle extra
+    query params or fragment markers.
     """
-    return f"{API_BASE}?city={city}&app={app}&version={version}"
+    query = urllib.parse.urlencode({"city": city, "app": app, "version": version})
+    return f"{API_BASE}?{query}"
 
 
-# One tier per whole degree from 12 °C up to "off the charts". Hotter tiers
-# use warmer/more vibrant colors and more celebratory emoji.
-# Order: highest threshold first. `classify` walks down and returns the first match.
-_TIERS: tuple[tuple[float, str, str, str], ...] = (
-    (24, "🔥", "#7a0010", "🔥🌶️🔥 OFF THE CHARTS — record territory!"),
-    (23, "🔥", "#b00020", "🔥🔥 Hotter than a hot tub."),
-    (22, "🔥", "#d0021b", "🔥🏊 BATHTUB MODE — spaghetti water."),
-    (21, "☀️", "#f5511a", "🏖️☀️ Linger after work."),
-    (20, "☀️", "#f59020", "🌞 PERFECT — grab the towel."),
-    (19, "🏊", "#2eb886", "🏊‍♀️🏊 Properly nice, go for it."),
-    (18, "🏊", "#7ed321", "🎉 SWIM-WORTHY — get in."),
-    (17, "🤔", "#f5d020", "🤔 Almost swimmable, depending on bravery."),
-    (16, "😬", "#f5a623", "🤐 Quick dip if you must."),
-    (15, "😬", "#f5a623", "🥽 Brave-souls only."),
-    (14, "🥶", "#6cb7d8", "🧣 Cold enough to lie about it."),
-    (13, "🥶", "#5b9bd5", "🥶 Numb fingers in seconds."),
-    (12, "🥶", "#4a90e2", "🦶 Toes-only territory."),
+# One water tier per whole degree from 12 °C up to "off the charts". Hotter
+# tiers use warmer / more vibrant colors. `_WATER_TIERS` returns a tier *name*
+# (used as the matrix row key) so the slogan picker can combine it with the
+# current weather.
+# Order: highest threshold first. `classify_water` walks down and returns the
+# first match.
+_WATER_TIERS: tuple[tuple[float, str, str, str], ...] = (
+    (24, "🔥", "#7a0010", "hot"),
+    (23, "🔥", "#b00020", "hot"),
+    (22, "🔥", "#d0021b", "hot"),
+    (21, "☀️", "#f5511a", "perfect"),
+    (20, "☀️", "#f59020", "perfect"),
+    (19, "🏊", "#2eb886", "swim"),
+    (18, "🏊", "#7ed321", "swim"),
+    (17, "🤔", "#f5d020", "cool"),
+    (16, "😬", "#f5a623", "cool"),
+    (15, "😬", "#f5a623", "cool"),
+    (14, "🥶", "#6cb7d8", "cold"),
+    (13, "🥶", "#5b9bd5", "cold"),
+    (12, "🥶", "#4a90e2", "cold"),
 )
-_SUB_FREEZING: tuple[str, str, str] = (
-    "🧊",
-    "#2a5e8a",
-    "☕ Hard pass — coffee weather.",
-)
+_SUB_FREEZING_TIER: tuple[str, str, str] = ("🧊", "#2a5e8a", "frigid")
+
+# Weather tier names. "unknown" is the fallback when the API gives us nothing
+# useful to read — we still post but use a weather-neutral slogan.
+WEATHER_TIERS = ("sunny", "cloudy", "rainy", "unknown")
+
+# Decision matrix: water tier × weather tier → slogan. Rain always blocks the
+# swim recommendation (the user's hard rule: "rain → no swimming"). Sunny +
+# warm is the best case. "unknown" slogans avoid mentioning weather.
+SLOGAN_MATRIX: dict[tuple[str, str], str] = {
+    # frigid (<12 °C)
+    ("frigid", "sunny"):   "🧊☀️ Ice water, warm sun — pretty though.",
+    ("frigid", "cloudy"):  "🧊☁️ Frigid and grey — winter-coat weather.",
+    ("frigid", "rainy"):   "🧊🌧️ Frigid and wet — stay inside.",
+    ("frigid", "unknown"): "☕ Hard pass — coffee weather.",
+    # cold (12–14 °C)
+    ("cold", "sunny"):     "🦶☀️ Cold water, warm sun — toes only.",
+    ("cold", "cloudy"):    "🥶☁️ Cold and grey — coffee day.",
+    ("cold", "rainy"):     "🚫🌧️ Cold and raining — definitely no.",
+    ("cold", "unknown"):   "🥶 Toes-only territory.",
+    # cool (15–17 °C)
+    ("cool", "sunny"):     "🥽☀️ Cool water, bright sun — brave souls in, towel ready.",
+    ("cool", "cloudy"):    "😬☁️ Cool and grey — not really swim weather.",
+    ("cool", "rainy"):     "🚫🌧️ Cool and raining — skip it.",
+    ("cool", "unknown"):   "🥽 Brave-souls only.",
+    # swim (18–19 °C)
+    ("swim", "sunny"):     "🎉☀️ Swim-worthy and sunny — go now!",
+    ("swim", "cloudy"):    "🏊☁️ Swim-worthy under clouds — still a go.",
+    ("swim", "rainy"):     "🚫🌧️ Warm enough but raining — wait it out.",
+    ("swim", "unknown"):   "🎉 SWIM-WORTHY — get in.",
+    # perfect (20–21 °C)
+    ("perfect", "sunny"):  "🌞🏊 Perfect water + perfect sun — get there now!",
+    ("perfect", "cloudy"): "🏖️☁️ Perfect water, overcast — still go.",
+    ("perfect", "rainy"):  "🚫🌧️ Perfect water wasted on rain — wait it out.",
+    ("perfect", "unknown"): "🌞 PERFECT — grab the towel.",
+    # hot (22+ °C)
+    ("hot", "sunny"):      "🔥☀️ Bathtub mode + full sun — peak conditions!",
+    ("hot", "cloudy"):     "🔥☁️ Hot water, grey skies — still worth it.",
+    ("hot", "rainy"):      "🚫🌧️ Warm but raining — wait for the sun.",
+    ("hot", "unknown"):    "🔥 BATHTUB MODE.",
+}
+
+WEATHER_EMOJI: dict[str, str] = {
+    "sunny": "☀️",
+    "cloudy": "⛅",
+    "rainy": "🌧️",
+    "unknown": "",
+}
+
+WEATHER_LABEL: dict[str, str] = {
+    "sunny": "Sunny",
+    "cloudy": "Cloudy",
+    "rainy": "Raining",
+    "unknown": "",
+}
 
 
-def classify(temp: float) -> tuple[str, str, str]:
-    """Map a water temperature to (emoji, slack_color, slogan).
+def classify_water(temp: float) -> tuple[str, str, str]:
+    """Map a water temperature to (emoji, slack_color, water_tier_name).
 
     One tier per whole degree from 12 °C up to "off the charts" at 24 °C+.
-    Hotter tiers get warmer colors and more celebratory emoji. The slogan is
-    the tier's signature line — short, fun, and the second-most prominent
-    element in the Slack message (the temperature itself is first).
+    Hotter tiers get warmer / more vibrant colors.
     """
-    for threshold, emoji, color, slogan in _TIERS:
+    for threshold, emoji, color, tier_name in _WATER_TIERS:
         if temp >= threshold:
-            return emoji, color, slogan
-    return _SUB_FREEZING
+            return emoji, color, tier_name
+    return _SUB_FREEZING_TIER
+
+
+def _pick_period(today: dict, hour: int) -> dict:
+    """Pick today.v / today.n / today.a based on current hour ("right now").
+
+    `v` = Vormittag (morning, < 12 h), `n` = Nachmittag (afternoon, 12–17 h),
+    `a` = Abend (evening, ≥ 17 h).
+    """
+    key = "v" if hour < 12 else ("n" if hour < 17 else "a")
+    return today.get(key) or {}
+
+
+def classify_weather(data: dict, now: datetime) -> tuple[str, str]:
+    """Return (weather_emoji, weather_tier) ∈ {sunny, cloudy, rainy, unknown}.
+
+    Reads `weather.current.rr` for live rain and the matching `weather.today`
+    period (chosen by `now.hour`) for sun/rain forecast. Rain is detected
+    aggressively (any of: current rain > 0, period rain > 0, period rrisk ≥
+    `_RAIN_RISK_THRESHOLD`) because the user's rule is "rain → no swimming".
+    """
+    weather = data.get("weather") or {}
+    if not weather:
+        return WEATHER_EMOJI["unknown"], "unknown"
+
+    current = weather.get("current") or {}
+    today = weather.get("today") or {}
+    period = _pick_period(today, now.hour)
+
+    current_rr = float(current.get("rr") or 0)
+    period_rr = float(period.get("rr") or 0)
+    rrisk = float(period.get("rrisk") or 0)
+
+    if current_rr > 0 or period_rr > 0 or rrisk >= _RAIN_RISK_THRESHOLD:
+        return WEATHER_EMOJI["rainy"], "rainy"
+
+    symt = period.get("symt")
+    if symt == 1 and rrisk < _RAIN_RISK_THRESHOLD:
+        return WEATHER_EMOJI["sunny"], "sunny"
+
+    if not period:
+        # No forecast for this period and no rain signal we could parse —
+        # don't claim sunny or cloudy, fall back to the neutral slogans.
+        return WEATHER_EMOJI["unknown"], "unknown"
+
+    return WEATHER_EMOJI["cloudy"], "cloudy"
+
+
+def classify(temp: float, weather_tier: str = "unknown") -> tuple[str, str, str]:
+    """Map (water_temp, weather_tier) to (emoji, slack_color, combined_slogan).
+
+    Thin wrapper around `classify_water` + the slogan matrix. The emoji and
+    colour come from the per-degree water tier; the slogan comes from the
+    matrix and reflects both dimensions ("rain → no swim", "sunny + warm =
+    go now!").
+    """
+    emoji, color, water_tier = classify_water(temp)
+    slogan = SLOGAN_MATRIX[(water_tier, weather_tier)]
+    return emoji, color, slogan
 
 
 def build_bar(
@@ -156,9 +285,10 @@ def build_payload(
     weather_current = (data.get("weather") or {}).get("current") or {}
     atmp = weather_current.get("tt")
 
-    emoji, color, slogan = classify(temp)
-    bar = build_bar(temp)
     when = now if now is not None else datetime.now(CH_TZ)
+    weather_emoji, weather_tier = classify_weather(data, when)
+    emoji, color, slogan = classify(temp, weather_tier=weather_tier)
+    bar = build_bar(temp)
 
     # 1. Headline — date + temp are the two big things.
     headline_text = (
@@ -166,22 +296,30 @@ def build_payload(
         f"   ·   {build_datetime_str(when)}"
     )
 
-    # 4. Details — bar, then forecast, then ambient metrics, with blank lines
-    #    in between for breathing room. Slack renders "\n\n" as a paragraph
-    #    break, "\n" as a soft newline.
-    detail_sections: list[str] = [f"`{bar}`   _10°—26°_"]
+    # 4. Details — "outlook for right now" first (answers: are we going now?),
+    #    then forecast, flow, and the bar. Blank lines between for breathing
+    #    room (Slack renders "\n\n" as a paragraph break).
+    detail_sections: list[str] = []
+
+    # Outlook: weather right now + air temp, fused into one short verdict line.
+    if weather_tier != "unknown" and atmp is not None:
+        detail_sections.append(
+            f"{weather_emoji}  *{WEATHER_LABEL[weather_tier]}* right now, Air {atmp}°C"
+        )
+    elif weather_tier != "unknown":
+        detail_sections.append(f"{weather_emoji}  *{WEATHER_LABEL[weather_tier]}* right now")
+    elif atmp is not None:
+        detail_sections.append(f"🌡️  Air {atmp}°C")
+
     if forecast2h_raw is not None:
         forecast2h = float(forecast2h_raw)
         arrow = forecast_trend(temp, forecast2h)
-        detail_sections.append(f"{arrow}  *2h forecast: {forecast2h}°C*")
+        detail_sections.append(f"{arrow}  *2h water: {forecast2h}°C*")
 
-    ambient: list[str] = []
-    if atmp is not None:
-        ambient.append(f"🌡️  Air {atmp}°C")
     if flow is not None:
-        ambient.append(f"💧  Flow {flow} m³/s")
-    if ambient:
-        detail_sections.append("   ·   ".join(ambient))
+        detail_sections.append(f"💧  Flow {flow} m³/s")
+
+    detail_sections.append(f"`{bar}`   _10°—26°_")
 
     details_text = "\n\n".join(detail_sections)
 
@@ -219,12 +357,27 @@ def build_payload(
 # ---------------------------------------------------------------------------
 
 def fetch_aare_data(url: str) -> dict:
+    """GET the API and return parsed JSON.
+
+    Raises ``RuntimeError`` on non-2xx responses. Read is capped to keep a
+    pathological response from buffering arbitrarily much.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
-        return json.loads(resp.read())
+        if resp.status >= 300:
+            raise RuntimeError(f"aare.guru returned HTTP {resp.status}")
+        body = resp.read(2_000_000)  # 2 MB cap — real responses are ~5 KB
+    return json.loads(body)
 
 
 def post_to_slack(payload: dict, webhook_url: str) -> None:
+    """POST a payload to the Slack incoming webhook.
+
+    Raises ``RuntimeError`` if Slack does not return HTTP 2xx with body "ok".
+
+    SECURITY: ``webhook_url`` is a secret. Never include it in raised errors
+    or log lines — keep error messages limited to the Slack response.
+    """
     req = urllib.request.Request(
         webhook_url,
         data=json.dumps(payload).encode("utf-8"),
@@ -234,7 +387,7 @@ def post_to_slack(payload: dict, webhook_url: str) -> None:
         },
     )
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
-        body = resp.read().decode("utf-8", errors="replace")
+        body = resp.read(10_000).decode("utf-8", errors="replace")
         if resp.status >= 300 or body.strip() != "ok":
             raise RuntimeError(f"Slack returned {resp.status}: {body!r}")
 
@@ -266,7 +419,7 @@ def main() -> int:
         url = build_api_url(city, app=app, version=version)
         try:
             data = fetch_aare_data(url)
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
             print(f"ERROR: failed to fetch aare.guru API for {city}: {exc}", file=sys.stderr)
             exit_code = max(exit_code, 2)
             continue
@@ -277,14 +430,20 @@ def main() -> int:
 
         aare = data.get("aare")
         if not isinstance(aare, dict) or "temperature" not in aare:
+            keys = sorted((data or {}).keys()) if isinstance(data, dict) else type(data).__name__
             print(
-                f"ERROR: API response missing aare.temperature for {city}: {data!r}",
+                f"ERROR: API response missing aare.temperature for {city}; top-level keys: {keys}",
                 file=sys.stderr,
             )
             exit_code = max(exit_code, 2)
             continue
 
-        payload = build_payload(data, city_label=_city_label(city))
+        try:
+            payload = build_payload(data, city_label=_city_label(city))
+        except (KeyError, TypeError, ValueError) as exc:
+            print(f"ERROR: bad API payload shape for {city}: {exc}", file=sys.stderr)
+            exit_code = max(exit_code, 2)
+            continue
 
         try:
             post_to_slack(payload, webhook_url)

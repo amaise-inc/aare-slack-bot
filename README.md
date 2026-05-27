@@ -18,53 +18,72 @@ attribution footer linking back to aare.guru and BAFU. Swim-worthy temperatures
 ## Sample output
 
 The message has a clear visual hierarchy: **date + temperature** as the big
-header, **bold slogan** below it, then **details** (forecast, air, flow, bar),
-and a small **attribution** footer. The vertical attachment bar takes on the
-tier color — deep blue when frozen through to deep red at record temps.
+header, **bold slogan** below it, then a roomy **details** block (outlook,
+forecast, flow, bar), and a small **attribution** footer. The vertical
+attachment bar takes on the tier color — deep blue when frozen through to deep
+red at record temps. The slogan combines **water tier × weather tier**, so
+warm + sunny means "go now!" and **rain always blocks the swim recommendation**.
 
-Warm (≥ 18 °C):
+Warm + sunny:
 
 ```
-🏊 Aare Bern 19.2°C  ·  Wed 27 May · 11:30       (header — big & bold)
-*🎉 SWIM-WORTHY — get in.*                       (slogan — bold)
+🏊  Aare Bern  18.7°C   ·   Wed 27 May · 11:30       (header)
+*🎉☀️ Swim-worthy and sunny — go now!*               (slogan, bold)
 ──────────────────────────────────────────────
+☀️  Sunny right now, Air 27°C
+
+↗  2h water: 19.0°C
+
+💧  Flow 191 m³/s
+
 `█████████░░░░░░░`  10°—26°
-↗ 2h: 19.8°C  ·  🌡️ Air 24°C  ·  💧 Flow 142 m³/s
-📡 Data: aare.guru · BAFU                        (footer — small)
+📡 Data: aare.guru · BAFU                            (footer)
 ```
 
-Cold (< 18 °C):
+Warm + raining (no swim regardless):
 
 ```
-🥶 Aare Bern 13.1°C  ·  Wed 27 May · 11:30
-*🥶 Numb fingers in seconds.*
+🏊  Aare Bern  18.7°C   ·   Wed 27 May · 16:00
+*🚫🌧️ Warm enough but raining — wait it out.*
 ──────────────────────────────────────────────
-`██░░░░░░░░░░░░░░`  10°—26°
-↘ 2h: 12.8°C  ·  🌡️ Air 18°C  ·  💧 Flow 195 m³/s
+🌧️  Raining right now, Air 18°C
+
+↘  2h water: 18.4°C
+
+💧  Flow 195 m³/s
+
+`█████████░░░░░░░`  10°—26°
 📡 Data: aare.guru · BAFU
 ```
 
-## Temperature tiers — one per degree, hotter = more colorful
+## Decision matrix — water × weather
 
-| Temp     | Emoji | Slogan                                                  | Color    |
-|----------|-------|---------------------------------------------------------|----------|
-| ≥ 24 °C  | 🔥    | 🔥🌶️🔥 OFF THE CHARTS — record territory!               | deep red |
-| 23 °C    | 🔥    | 🔥🔥 Hotter than a hot tub.                             | red      |
-| 22 °C    | 🔥    | 🔥🏊 BATHTUB MODE — spaghetti water.                    | red      |
-| 21 °C    | ☀️    | 🏖️☀️ Linger after work.                                | orange-red |
-| 20 °C    | ☀️    | 🌞 PERFECT — grab the towel.                            | orange   |
-| 19 °C    | 🏊    | 🏊‍♀️🏊 Properly nice, go for it.                       | green    |
-| 18 °C    | 🏊    | 🎉 SWIM-WORTHY — get in.                                | lime     |
-| 17 °C    | 🤔    | 🤔 Almost swimmable, depending on bravery.              | yellow   |
-| 16 °C    | 😬    | 🤐 Quick dip if you must.                               | orange   |
-| 15 °C    | 😬    | 🥽 Brave-souls only.                                    | orange   |
-| 14 °C    | 🥶    | 🧣 Cold enough to lie about it.                         | light blue |
-| 13 °C    | 🥶    | 🥶 Numb fingers in seconds.                             | blue     |
-| 12 °C    | 🥶    | 🦶 Toes-only territory.                                 | blue     |
-| < 12 °C  | 🧊    | ☕ Hard pass — coffee weather.                          | deep blue |
+The slogan picker combines a coarse **water tier** with a coarse **weather
+tier**. Water tier emoji + color still scale per-degree (so 22 °C, 23 °C,
+24 °C look progressively more vibrant), but the slogan reflects both axes:
 
-Forecast arrow uses a ±0.3 °C threshold:
-`↗` warming, `↘` cooling, `→` steady.
+|                | ☀️ Sunny                       | ⛅ Cloudy                  | 🌧️ Rainy                          |
+|----------------|--------------------------------|----------------------------|------------------------------------|
+| **hot** ≥22 °C | Bathtub mode + sun — peak!     | Hot, grey — still worth it | 🚫 Warm but raining — wait        |
+| **perfect** 20–21 °C | Perfect + perfect — go!  | Perfect, overcast — still go | 🚫 Wasted on rain — wait it out |
+| **swim** 18–19 °C    | Swim-worthy and sunny — go now! | Swim-worthy, clouds — still a go | 🚫 Warm enough but raining — wait |
+| **cool** 15–17 °C    | Brave souls in, towel ready | Cool + grey — not really   | 🚫 Skip it                        |
+| **cold** 12–14 °C    | Cold water, warm sun — toes only | Cold and grey — coffee | 🚫 Definitely no                  |
+| **frigid** <12 °C    | Ice water, pretty though   | Frigid and grey — winter coat | Frigid and wet — stay inside    |
+
+**Rain rule.** Rain is detected aggressively (any of: current rain `> 0`,
+forecast-period rain `> 0`, or forecast-period rain risk `rrisk ≥ 50%`). When
+rain is detected the slogan never tells you to swim — it tells you to wait or
+skip.
+
+**Weather period mapping.** The bot reads `weather.today.v` (morning) before
+12:00, `weather.today.n` (afternoon) 12:00–17:00, and `weather.today.a`
+(evening) after 17:00 — i.e. *right now*, not later today.
+
+**Water tier color escalation:** deep blue (<12 °C) → blue → cyan → lime → green
+→ yellow → orange → red → deep red (≥24 °C).
+
+Forecast arrow uses a ±0.3 °C threshold: `↗` warming, `↘` cooling, `→` steady.
 
 ## Multiple cities
 

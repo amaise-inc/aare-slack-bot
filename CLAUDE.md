@@ -25,7 +25,7 @@ the README.
 
 | File | Purpose |
 | --- | --- |
-| `aare_slack.py` | Single-file script. Pure functions (`parse_cities`, `build_api_url`, `classify`, `build_bar`, `forecast_trend`, `build_datetime_str`, `build_payload`) are tested. IO (`fetch_aare_data`, `post_to_slack`) is not. |
+| `aare_slack.py` | Single-file script. Pure functions (`parse_cities`, `build_api_url`, `classify_water`, `classify_weather`, `classify`, `build_bar`, `forecast_trend`, `build_datetime_str`, `build_payload`) are tested. IO (`fetch_aare_data`, `post_to_slack`) is not. |
 | `test_aare_slack.py` | `unittest` tests for the pure functions. Run via `make test` or `python -m unittest discover -v`. |
 | `.github/workflows/aare.yml` | Cron + manual-dispatch workflow that posts to Slack. Uses repo secret `SLACK_WEBHOOK_AARE`. Weekdays only (`* * 1-5`). |
 | `.github/workflows/test.yml` | Runs tests on every PR and push to `main`. |
@@ -54,17 +54,40 @@ top level.
 
 ## Slack payload shape
 
-One attachment with these blocks, identified by `block_id`:
+One attachment with five blocks, always in this order:
 
-1. `date` — context block with `📅 *Tue 27 May · 11:30*` (always present)
-2. `header` — only when `temp >= 18`
-3. `main` — section block (mrkdwn) with the body
-4. `attribution` — context block with `📡 Data: <aare.guru> · <BAFU>` (always present)
+1. `headline` — header block (big, plain_text): emoji + city + temp + date/time
+2. `slogan` — section block (mrkdwn, bold): the tier-signature line from `SLOGAN_MATRIX`
+3. (no `block_id`) — divider
+4. `details` — section block (mrkdwn): outlook (weather + air), forecast,
+   flow, bar. Lines are joined with `\n\n` for paragraph spacing.
+5. `attribution` — context block (mrkdwn): `📡 Data: <aare.guru> · <BAFU>`
+   — mandatory per aare.guru's terms
 
-Attachment `color` is set per tier (see `classify`).
+Attachment `color` comes from `classify_water` (per-degree color escalation).
 
-Tests find blocks by `block_id` (see `_block_by_id` helper). If you add a
-block, give it a stable `block_id` so tests don't have to count indices.
+Tests find blocks by `block_id` (see `_find_block` / `_text_of` helpers).
+If you add a block, give it a stable `block_id` so tests don't have to count
+indices.
+
+## Classification — water × weather matrix
+
+The slogan is picked from `SLOGAN_MATRIX[(water_tier, weather_tier)]`:
+
+- **Water tier** comes from `classify_water(temp)`: `frigid`, `cold`, `cool`,
+  `swim`, `perfect`, `hot`. Per-degree color/emoji escalation lives in
+  `_WATER_TIERS`.
+- **Weather tier** comes from `classify_weather(data, now)`: `sunny`,
+  `cloudy`, `rainy`, `unknown`. Reads `weather.current.rr` for live rain
+  and the matching period of `weather.today` (`v` morning <12h, `n`
+  afternoon 12–17h, `a` evening 17h+). **Hard rule: rain → no swim** — any
+  of (current rain > 0, period rain > 0, period `rrisk` ≥ 50) marks the
+  message as rainy and the slogan blocks the swim recommendation.
+
+When adding new combinations: keep slogans English-only (no Bernese German),
+unique across the whole matrix, and ASCII-safe in the rain-blocking detection
+(the test uses `\b` word boundaries so don't make the negative signal `"no"`
+collide with `"now"`).
 
 ## Configuration
 
