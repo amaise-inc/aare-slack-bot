@@ -1,0 +1,28 @@
+name: Post Aare temp to Slack
+
+on:
+  schedule:
+    # Cron is in UTC. Optimised for CH summer time (CEST = UTC+2):
+    - cron: '30 9 * * *'   # 11:30 CH summer (10:30 winter) — Lunch
+    - cron: '0 14 * * *'   # 16:00 CH summer (15:00 winter) — Feierabend
+  workflow_dispatch:       # manual trigger for testing
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    name: Post to #aare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Post Aare temperature to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_AARE }}
+        run: python aare_slack.py
