@@ -56,9 +56,10 @@ Forecast arrow uses a ±0.3 °C threshold:
 
 ## Multiple cities
 
-By default the bot posts for **Bern** only. To post for several Aare-side cities
-in one run, set the `CITIES` env var to a comma-separated list of slugs that the
-[aare.guru API](https://aare.guru/) recognises:
+**Setup is one env var.** By default the bot posts for **Bern** only. To post
+for several Aare-side cities in one run, set the `CITIES` env var to a
+comma-separated list of slugs that the [aare.guru API](https://aare.guru/)
+recognises:
 
 ```yaml
 # in .github/workflows/aare.yml, under the "Post …" step's env:
