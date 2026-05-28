@@ -111,10 +111,16 @@ per-city errors. Don't collapse them.
 ## Time / timezone
 
 - Display time is `datetime.now(ZoneInfo("Europe/Zurich"))` — handles DST.
-- Cron in `.github/workflows/aare.yml` is in UTC, tuned for CEST (UTC+2):
-  `30 9 * * 1-5` → 11:30 CH summer · `0 14 * * 1-5` → 16:00 CH summer.
-  In winter (CET = UTC+1), posts arrive 1 hour earlier — accepted trade-off,
-  since the water is too cold to swim anyway.
+- Cron in `.github/workflows/aare.yml` is in UTC, tuned for CEST (UTC+2),
+  four posts per weekday: `23 9` → ~11:30 · `53 12` → ~15:00 · `23 14` →
+  ~16:30 · `23 15` → ~17:30 (all CH summer). In winter (CET = UTC+1), posts
+  arrive 1 hour earlier — accepted trade-off, since the water is too cold to
+  swim anyway.
+- Minutes are deliberately off the `:00`/`:30` marks. GitHub's scheduler
+  queues those popular slots behind everyone else's and routinely delays them
+  60min+ or drops them entirely (this is why the old `30 9` 11:30 post kept
+  not firing). Off-peak minutes a few min before each target fire far more
+  reliably and land near the intended time once GitHub's usual delay applies.
 - Tests pass an explicit `now=FIXED_NOW` to `build_payload` for determinism.
   Always do the same when adding new payload tests.
 
